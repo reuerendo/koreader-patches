@@ -1,5 +1,5 @@
 ### 2-bookloadcover.lua
-Replaces the information message when opening a book with the book cover.
+Replaces the information message when opening a book with the book cover. (The patch uses the cache from cover.koplugin. I recommend increasing the cache size in the settings)
 
 ### 2-keep-previous-screen.lua
 Disables the information message when opening a book.
