@@ -9,13 +9,15 @@
     2. The patch will be automatically loaded on startup
     
     Features:
-    - Replaces InfoMessage with native Message() function
+    - Replaces InfoMessage with native Message() or DialogSynchro()
+    - Long texts (>200 chars) automatically use DialogSynchro with OK button
     - Replaces ConfirmBox with native DialogSynchro() function
     - Preserves all callbacks and behavior
     - Automatic icon mapping based on message type
     - Blocks input during native dialog display to prevent freezing
     
     Fixes:
+    - Added automatic detection of long texts for proper dialog type
     - Removed UIManager:scheduleIn to fix missing dialogs during blocking operations
     - Suppressed UIManager full-screen refresh after dialog closes (silent close)
 ]]
@@ -87,6 +89,27 @@ local function removeBidiChars(text)
     cleaned = cleaned:gsub("\xE2\x80[\xAA-\xAE]", "")
     
     return cleaned
+end
+
+--[[
+    Check if text is long enough to require DialogSynchro instead of Message
+    Threshold: 200 characters or multiple paragraphs
+]]
+local function isLongText(text)
+    if not text then return false end
+    
+    -- Check length
+    if #text > 200 then
+        return true
+    end
+    
+    -- Check for multiple paragraphs (more than 2 line breaks)
+    local _, newline_count = text:gsub("\n", "")
+    if newline_count > 2 then
+        return true
+    end
+    
+    return false
 end
 
 -- ============================================================================
@@ -161,7 +184,13 @@ local original_infomessage_new = InfoMessage.new
 function InfoMessage:new(args)
     -- Check if we should use native dialogs
     if args.text and PBNativeDialog:isSafeToShow() then
-        logger.dbg("[PB Native Dialogs] InfoMessage: using native dialog")
+        local use_long_dialog = isLongText(args.text)
+        
+        if use_long_dialog then
+            logger.dbg("[PB Native Dialogs] InfoMessage: using DialogSynchro (long text)")
+        else
+            logger.dbg("[PB Native Dialogs] InfoMessage: using native Message (short text)")
+        end
         
         local icon = PBNativeDialog.ICON.INFO
         if args.icon then
@@ -173,8 +202,6 @@ function InfoMessage:new(args)
                 icon = PBNativeDialog.ICON.QUESTION
             end
         end
-        
-        local timeout_ms = (args.timeout or 3) * 1000
         
         -- Create fake widget
         local Widget = require("ui/widget/widget")
@@ -192,15 +219,35 @@ function InfoMessage:new(args)
         fake.onShow = function()
             PBNativeDialog.dialog_active = true
             
-            -- Show blocking native dialog
-            local status, err = pcall(function()
-                inkview.Message(icon, "KOReader", removeBidiChars(args.text), timeout_ms)
-            end)
+            local status, err
+            if use_long_dialog then
+                -- Use DialogSynchro for long texts (with OK button)
+                -- IMPORTANT: DialogSynchro requires at least button1 and button2
+                -- button1 is displayed on the left (Cancel/Back position)
+                -- button2 is displayed on the right (OK/Confirm position)
+                -- We only want OK button, so we make button1 empty string
+                status, err = pcall(function()
+                    inkview.DialogSynchro(
+                        icon,
+                        "KOReader",
+                        removeBidiChars(args.text),
+                        "OK",
+                        nil,
+                        nil
+                    )
+                end)
+            else
+                -- Use Message for short texts (with timeout)
+                local timeout_ms = (args.timeout or 3) * 1000
+                status, err = pcall(function()
+                    inkview.Message(icon, "KOReader", removeBidiChars(args.text), timeout_ms)
+                end)
+            end
             
             PBNativeDialog.dialog_active = false
             
             if not status then
-                logger.err("[PB Native Dialogs] Message() failed: " .. tostring(err))
+                logger.err("[PB Native Dialogs] Native dialog failed: " .. tostring(err))
             end
             
             -- Close fake widget silently (no refresh)
@@ -305,7 +352,7 @@ end
 -- ============================================================================
 
 if PBNativeDialog.enabled then
-    logger.info("[PB Native Dialogs] Patch applied: Sync mode + Silent Close")
+    logger.info("[PB Native Dialogs] Patch applied: Sync mode + Silent Close + Long Text Detection")
 else
     logger.warn("[PB Native Dialogs] Patch loaded but DISABLED")
 end
